@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<script src="phonegap-2.9.0.js" type="text/javascript"></script>
+<script src="barcodescanner.js" type="text/javascript"></script>
+<script src="IpAddress.js" type="text/javascript"></script>
+<link rel="stylesheet" href="Css/jquery.mobile-1.4.2.min.css"/>
+<link rel="stylesheet" href="Css/conf.css"/>
+<script src="Js/jquery.js" type="text/javascript"></script>
+<script src="Js/db.js" type="text/javascript"></script>
+<script src="Js/jquery.mobile-1.4.2.min.js" type="text/javascript"></script>
+<script type="text/javascript">
+	//监听 Phonegap
+	function onLoad(){
+		document.addEventListener("deviceready", onDeviceReady, false); //JS监听PhoneGap是否加载进来 然后执行一个回调函数
+		document.addEventListener("backbutton",clickBackButton, false); //监听点击物理返回键
+	}
+	//获取网络信息
+	function getNetworkStatus(){
+		var myState = navigator.network.connection.type;
+		return myState;
+	}
+	function onDeviceReady(){
+		
+	}
+	//在扫描界面点击设备物理返回键
+	function clickBackButton(){
+		window.location.href = "opr_board.html";//点击物理返回键，返回opr_board.html页面
+		return false;
+	}
+	//获取当前时间  格式为 xxxx-xx-xx xx:xx:xx
+	function getCrtTime(){
+		var myDate = new Date();
+		var year = myDate.getFullYear();//年份  XXXX
+		var month = myDate.getMonth()+1;//月份
+		var day = myDate.getDate();//日期
+		var hour = myDate.getHours();//小时
+		var minute = myDate.getMinutes();//分钟
+		var second = myDate.getSeconds();//秒数
+		var crt_time = year+"-"+month+"-"+day+" "+hour+":"+minute+":"+second;
+		return crt_time;
+	}
+	var scanCode = function() {
+	 window.plugins.barcodeScanner.scan(
+        function(result) {
+			if(result.cancelled){
+				return false;
+			}else{
+				if(result.format.trim() == "QR_CODE"){
+					if(getNetworkStatus() == "wifi"){
+						//是wifi，需要与主板进行小交互一下，既然是WiFi，那么肯定需要获取IPV4地址
+						var ipAddress = cordova.require("cordova/plugin/ipaddress");
+							 ipAddress.get(function(address) {
+								//alert("IP地址"+address);
+								var dotLastPos = address.lastIndexOf('.');
+								var BOARD_DOMIN = address.substr(0, dotLastPos);
+								BOARD_DOMIN += ".218";//主板IP
+								//alert(BOARD_DOMIN);
+								//检查是否是内网,test.cgi请求 如果返回一个microcloud 那就证明是在内网
+								$.ajax({
+									url:"http://"+BOARD_DOMIN+"/cgi-bin/test.cgi?microcloud",
+									type:"post",
+									dataType:"text",
+									timeout:1000,
+									success:function(data){
+										//alert(data);
+										if(data.trim() == "microcloud"){
+											//alert("内网");
+											//需要将二维码封装，然后发送给主板
+											$.ajax({
+												url:"http://"+BOARD_DOMIN+"/cgi-bin/test.cgi?"+result.text,
+												type:"post",
+												dataType:"text",
+												success:function(data){
+													data = data.trim();//清除两边空格
+													//alert(data);
+													/*
+														通过返回的字符串的长度来识别是添加主板还是添加插座
+														添加主板 :YESas1d    ...
+														添加插座 :YESa       ...
+													*/
+													if(data == "NOT1"){
+														//alert("设备已存在");
+														$("#notice_div_out").show();
+														$("#notice_div").show();
+														$("#notice_div").html("您之前已添加过该设备");
+														setTimeout("$('#notice_div_out').fadeOut()", 1000);
+														return false;
+													}else if(data == "NOT2"){
+														//alert("设备已经注册过");
+														$("#notice_div_out").show();
+														$("#notice_div").show();
+														$("#notice_div").html("设备已经注册过");
+														setTimeout("$('#notice_div_out').fadeOut()", 1000);
+														return false;
+													}else if(data == "NOT3"){
+														//alert("不是我们的产品!谨防假冒");
+														$("#notice_div_out").show();
+														$("#notice_div").show();
+														$("#notice_div").html("不是我们的产品,谨防假冒");
+														setTimeout("$('#notice_div_out').fadeOut()", 1000);
+														return false;
+													}
+													/*
+														要跟主板那边商量好，具体返回的字符串的长度要将主板和插座区分开来
+													*/
+													if(data.length > 8){
+														//添加主板
+														if(data != "NOT3" && data != "NOT2" && data != "NOT1"){
+															//将YES后面的字符串截取出来,添加到WEB SQL DB中
+															var mb_max_id = parseInt(localStorage.getItem('mb_max_id'))+1;
+															var new_board_count = parseInt(localStorage.getItem('board_count'))+1;//主板数量+1
+															var board_name = data.substr(3);
+															var board_title = "主板"+new_board_count;
+															var crt_time = getCrtTime();//获取当前时间
+															db.transaction(function(tx){
+																tx.executeSql('insert into mainboards(number, title, time) values(?,?,?)',[board_name,board_title, crt_time],function(tx,rs){
+																	localStorage.setItem('board_count', new_board_count);
+																	localStorage.setItem('crt_board_id', mb_max_id);
+																	$("#notice_div_out").show();
+																	$("#notice_div").show();
+																	$("#notice_div").html("添加主板成功!");
+																	setTimeout("$('#notice_div_out').fadeOut()", 1000);
+																	return false;
+																},function(tx,error){
+																	$("#notice_div_out").show();
+																	$("#notice_div").show();
+																	$("#notice_div").html("添加主板失败,请重试!");
+																	setTimeout("$('#notice_div_out').fadeOut()", 1000);
+																	//alert(error.source + "::" + error.message);
+																});
+															});
+															localStorage.setItem('mb_max_id', mb_max_id);//将最大主键数保存到local中
+														}
+													}else{
+														//添加插座  START
+														if(data != "NOT3" && data != "NOT2" && data != "NOT1"){
+															var SCAN_SOCKET = data.substr(3);
+																var crt_time = getCrtTime();//当前时间
+																var crt_board_id = parseInt(localStorage.getItem('crt_board_id'));//当前主板
+																db.transaction(function(tx){
+																	tx.executeSql('insert into sockets(mb_id, number, title, active,time) values(?,?,?,?,?)',[crt_board_id,SCAN_SOCKET, '新插座','n',crt_time ],function(tx,rs){
+																		$("#new_socket_info").show("fast");
+																		$("#new_socket_number").attr("class", "BACK"+SCAN_SOCKET);
+																		//alert('添加插座成功!');
+																		$("#notice_div_out").show();
+																		$("#notice_div").show();
+																		$("#notice_div").html("添加插座成功!");
+																		setTimeout("$('#notice_div_out').fadeOut()", 1000);
+																		return false;
+																	},function(tx,error){
+																		//alert('添加插座失败');
+																		$("#notice_div_out").show();
+																		$("#notice_div").show();
+																		$("#notice_div").html("添加主板失败,请重试!");
+																		setTimeout("$('#notice_div_out').fadeOut()", 1000);
+																		//alert(error.source + "::" + error.message);
+																	});
+																});
+															//将插座表中的MAX_ID  + 1
+															var new_socket_max_id =  parseInt(localStorage.getItem('socket_max_id'))+1;
+															localStorage.setItem('socket_max_id', new_socket_max_id);
+															//添加插座   END
+														}
+													}
+												}//success  end
+
+											});
+										}
+									},complete: function(response) {
+										if(response.status == 200) {
+											//alert('有效');
+											return false;
+										} else {
+											$("#notice_div_out").show();
+											$("#notice_div").show();
+											$("#notice_div").html("请连接家里的WiFi");
+											setTimeout("$('#notice_div_out').fadeOut()", 2000);
+											return false;
+										}
+									}
+								});
+							}, function() {
+								//alert("获取主板信息失败,建议重启软件。");
+								$("#notice_div_out").show();
+								$("#notice_div").show();
+								$("#notice_div").html("未知错误,请重试");
+								setTimeout("$('#notice_div_out').fadeOut()", 2000);
+								return false;
+						});
+					}else{
+						$("#notice_div_out").show();
+						$("#notice_div").show();
+						$("#notice_div").html("请先联网");
+						setTimeout("$('#notice_div_out').fadeOut()", 1500);
+						return false;
+					}
+					return false;
+				}else{
+					//扫描的不是二维码
+					$("#notice_div_out").show();
+					$("#notice_div").show();
+					$("#notice_div").html("您扫描的不是二维码,请重试");
+					setTimeout("$('#notice_div_out').fadeOut()", 2000);
+					return false;
+				}
+			}
+		}, function(error) {
+			/*
+				没有扫描成功的回调函数
+				最后需要处理这里的显示错误信息给用户
+			*/
+			$("#notice_div_out").show();
+			$("#notice_div").show();
+			$("#notice_div").html("未知错误,请重新启动");
+			setTimeout("$('#notice_div_out').fadeOut()", 2000);
+			return false;
+		});
+	}
+
+
+//添加完插座之后，需要激活插座
+function active_socket(){
+	/*
+		还是需要向主办发送一个特定格式的数据
+	*/
+	//alert("激活");
+	var active_socket_number = $("#new_socket_number").attr("class").substr(0,5);
+	//alert("激活的插座number"+active_socket_number);
+	var ipAddress = cordova.require("cordova/plugin/ipaddress");
+		ipAddress.get(function(address) {
+			alert("IP地址"+address);
+			var dotLastPos = address.lastIndexOf('.');
+			var BOARD_DOMIN = address.substr(0, dotLastPos);
+			BOARD_DOMIN += ".218";//主板IP
+			alert(BOARD_DOMIN);
+			//检查是否是内网,test.cgi请求 如果返回一个microcloud 那就证明是在内网
+			$.ajax({
+				url:"http://"+BOARD_DOMIN+"/cgi-bin/test.cgi?microcloud",
+				type:"post",
+				dataType:"text",
+				success:function(data){
+					//alert(data);
+					if(data.trim() == "microcloud"){
+						//alert("内网");
+						//需要将二维码封装，然后发送给主板
+						$.ajax({
+							url:"http://"+BOARD_DOMIN+"/cgi-bin/test.cgi?"+active_socket_number,
+							type:"post",
+							dataType:"text",
+							success:function(data){
+								data = data.trim();//清除两边空格
+								//alert(data);
+								var socket_active_id = $("#new_socket_number").attr("class").substr(4);
+								//alert(socket_active_id);
+								db.transaction(function(tx){  
+									tx.executeSql("UPDATE sockets set active='y' WHERE number="+socket_active_id, [] ,function(tx, rs){  
+										//alert('成功修改插座'+socket_active_id);
+										$("#notice_div_out").show();
+										$("#notice_div").show();
+										$("#notice_div").html("激活成功");
+										setTimeout("$('#notice_div_out').fadeOut()", 1000);
+									},function(tx,error){
+										alert('修改插座失败，请重试');
+										//alert(error.source + "::" + error.message);
+									});
+								});
+							}//success  end
+						});
+					}else{
+						//alert("外网");
+						$("#notice_div_out").show();
+						$("#notice_div").show();
+						$("#notice_div").html("请先连接家里的WiFi");
+						setTimeout("$('#notice_div_out').fadeOut()", 1000);
+						return false;
+					}
+				}// success end
+			});
+		}, function() {
+			//alert("获取主板信息失败,建议重启软件。");
+			$("#notice_div_out").show();
+			$("#notice_div").show();
+			$("#notice_div").html("请先联网");
+			setTimeout("$('#notice_div_out').fadeOut()", 1000);
+			return false;
+	});
+}
+
+</script>
+</head>
+<body onload="onLoad()">
+<div data-role="page" data-position="fixed" id="opr_board">
+  <div data-role="header">
+	<div class="ui-grid-b">
+	 <div class="ui-block-a" align="left">
+         &nbsp;
+      </div>
+      <div class="ui-block-b" align="center">
+      	<h4>添加设备</h4>
+      </div>
+      <div class="ui-block-c" align="right">
+         &nbsp;
+      </div>
+    </div><!--ui-grid-b-->
+  </div>
+  <div data-role="content">
+	<!--  弹窗DIV  start-->
+	<div id="notice_div_out">
+		<div id="notice_div"></div>
+	</div>
+	<!--  弹窗DIV  end-->
+	<input type="button" onclick="scanCode()" value="添加主板" data-role="button"/>
+	<input type="button" onclick="scanCode()" value="添加插座" data-role="button"/>
+	<!--  这里显示刚刚扫描成功的主板，并且将显示信息显示在这里  -->
+	
+	
+	<div id="new_socket_info" style="display:none;">
+		恭喜您，成功添加插座!<br/>
+		<a href="#" id="new_socket_number" class="" onclick="active_socket()" data-role="button">点击激活</a>
+	</div>
+  </div>
+  <div data-role="footer" data-position="fixed">
+	<div data-role="navbar" data-iconpos="top">
+        <ul>
+		   <li><a href="opr_board.html" data-ajax="false" data-icon='home'  data-iconpos="top">主界面</a></li>
+		</ul>
+	</div><!--  end == navbar -->
+  </div><!--  end == footer -->
+</div><!--  end == page  -->
+</body>
+</html>

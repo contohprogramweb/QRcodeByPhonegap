@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>操作页面</title>
+	<script src="phonegap-2.9.0.js" type="text/javascript"></script>
+	<script src="barcodescanner.js" type="text/javascript"></script>
+	<script src="IpAddress.js" type="text/javascript"></script>
+	<link rel="stylesheet" href="Css/jquery.mobile-1.4.2.min.css"/>
+	<link rel="stylesheet" href="Css/conf.css"/>
+	<script src="Js/jquery.js" type="text/javascript"></script>
+	<script src="Js/conf.js" type="text/javascript"></script>
+	<script src="Js/db.js" type="text/javascript"></script>
+	<script src="Js/oprator.js" type="text/javascript"></script>
+	<script src="Js/jquery.mobile-1.4.2.min.js" type="text/javascript"></script>	
+	<script>
+		function init() {
+			document.addEventListener("deviceready", deviceInfo, false);
+			document.addEventListener("backbutton",clickBackButton, false); //监听点击物理返回键
+		}
+		function deviceInfo(){
+			
+		}
+		//处理各个页面的返回事件
+		function clickBackButton(){
+			var crt_page_url = getUrlParam(document.URL, "#");//商品ID
+			//如果通过URL能够在opr_board.html#ed_board中得到 ed_board的部分，那么回退到opr_board.html中
+			if(crt_page_url != null){
+				$.mobile.changePage('opr_board.html', {transition:'slide'});
+				return false;
+			}else{
+				navigator.notification.confirm('确认退出吗?',onConfirm,'提示', '确定,取消');
+			}
+		}
+		//opr_board.html确认退出的样式
+		function onConfirm(button){
+			if(button == '1'){
+				navigator.app.exitApp();//退出程序
+			}
+		}
+		
+		
+
+		//设置向服务器请求的local
+		var rand_num = GetRandomNum(1,3);
+		localStorage.setItem('B_NUM', rand_num);//设置随机的数字 1-3
+		//根据生成的数字，设置数字验证码
+		if(rand_num == 1){
+			localStorage.setItem('B_VERIFY', 'mo');
+		}else if(rand_num == 2){
+			localStorage.setItem('B_VERIFY', 'mn');
+		}else{
+			localStorage.setItem('B_VERIFY', 'mm');
+		}
+		localStorage.setItem('C_NUM', "@");//当没有选中插座时，发送的设备编号为 @
+		localStorage.setItem('C_VERIFY', "lp");//这里设置好 @ 的验证码
+		setInterval(function() {
+			if(localStorage.getItem('C_NUM') == "@"){
+				var rand_num = GetRandomNum(1,3);
+				localStorage.setItem('B_NUM', rand_num);//设置随机的数字 1-3
+				//根据生成的数字，设置数字验证码
+				if(rand_num == 1){
+					localStorage.setItem('B_VERIFY', 'mo');
+				}else if(rand_num == 2){
+					localStorage.setItem('B_VERIFY', 'mn');
+				}else{
+					localStorage.setItem('B_VERIFY', 'mm');
+				}
+			}
+			//设置URL B部分的数字 是随机生成end 
+			 //如果当前并未选中某个主板，那么请求结束
+			if(parseInt(localStorage.getItem('board_count')) == 0){
+				return false;
+			}
+			//构造向服务器请求URL
+			getBoardService();//执行这个函数，确保将当前选中的主板信息保存在localStorage中
+			var crt_board_number = localStorage.getItem('A_NUM');//当前主板number
+			var crt_board_verify = localStorage.getItem('A_VERIFY');//当前主板的verify
+			var URL_A = getRand(20)+crt_board_number+""+getRand(23)+crt_board_verify+getRand(1);//平时发送的 URL的A部分
+			var URL_B = getRand(30)+localStorage.getItem('B_NUM')+getRand(16)+localStorage.getItem('B_VERIFY')+getRand(1);//平时发送的URL的B的部分
+			var URL_C = getRand(40)+localStorage.getItem('C_NUM')+getRand(6)+localStorage.getItem('C_VERIFY')+getRand(1);
+			var SEND_CONTROL_URL = CONTROLDOMINNAME+"a="+URL_A+"&b="+URL_B+"&c="+URL_C;//控制服务器URL
+			$.ajax({
+				url:SEND_CONTROL_URL,
+				type:"get",
+				dataType:"jsonp",
+				timeout:1000,//设置一下这个timeout
+				success:function(data){
+					alert('success');
+					return false;
+				}
+			});
+		}, 1000);
+		//控制插座的开关
+		function change_socket_on_off(obj){
+			getIp();//执行以下getIp()，保证最新的主板IP地址已经保存到了local中
+			BOARD_DOMIN = localStorage.getItem('BOARD_IP');
+			//首先判断IP地址是否正确拿到，如果为空 则现在移动设备没有联网
+			if(BOARD_DOMIN == ""){
+				$("#notice_div_out").show();
+				$("#notice_div").show();
+				$("#notice_div").html("<p>请先联网</p>");
+				setTimeout("$('#notice_div_out').fadeOut()",2000);
+				return false;
+			}
+			//显示loader图片
+			$("#opr_thread").html("<img src='Images/loader.gif' width='25px' height='25px'/>");
+			if(obj.getAttribute('onOff') == "a"){
+				$("#notice_div_out").show();
+				$("#notice_div").show();
+				$("#notice_div").html("<p>正在开启</p>");
+			}else{
+				$("#notice_div_out").show();
+				$("#notice_div").show();
+				$("#notice_div").html("<p>正在关闭</p>");
+			}
+			
+			var SOCKET_CMD = "C"+obj.getAttribute('board_id').substr(0,1)+obj.getAttribute('onOff');//组合发送命令
+			/*
+				首先检查是否是内网
+			*/
+			$.ajax({
+				url:"http://"+BOARD_DOMIN+"/cgi-bin/test.cgi?microcloud",
+				type:"post",
+				dataType:"text",
+				timeout:100,//设置0.1秒检查内网
+				success:function(data){
+					data = data.trim();
+					if(data == "microcloud"){
+						//内网
+						$.ajax({
+							url:"http://"+BOARD_DOMIN+"/cgi-bin/test.cgi?"+SOCKET_CMD,
+							type:"post",
+							dataType:"text",
+							timeout:5000,
+							success:function(data){
+								//alert(data);
+								data = data.trim();//清除空格
+								$("#notice_div_out").fadeIn();
+								$("#notice_div").fadeIn();
+								if(data.substr(1, 3) == "YES"){
+									$("#notice_div").html('<p>操作成功</p>');
+									/* 关闭loader图 */
+									setTimeout("$('#notice_div_out').fadeOut()",1000);
+									$("#opr_thread").html("");
+									return false;
+								}else{
+									$("#notice_div").html('<p>未知结果,请重试</p>');
+									/* 关闭loader图 */
+									setTimeout("$('#notice_div_out').fadeOut()",1000);
+									$("#opr_thread").html("");
+									return false;
+								}
+							}
+						});
+					}
+				},complete: function(response) {
+					if(response.status == 200) {
+						//alert('有效');
+						return false;
+					} else {
+						//alert('无效走外网');
+						//URL B部分
+						localStorage.setItem('B_NUM', obj.getAttribute('onOff'));//关闭 还是 开启
+						if(obj.getAttribute('onOff') == 'a'){
+							localStorage.setItem('B_VERIFY', "jo");//设备开启 还是 关闭的校验
+						}else{
+							localStorage.setItem('B_VERIFY', "jn");//设备开启 还是 关闭的校验
+						}
+						//URL C部分
+						localStorage.setItem('C_NUM', obj.getAttribute('board_id').substr(0,1));//哪个设备 设备编号
+						localStorage.setItem('C_VERIFY', obj.getAttribute('board_id').substr(1));//设备编号的校验
+						setTimeout("recover()",1000);
+						//recover();
+					}
+				}
+			});
+		}
+		//请求后将local复位
+		function recover(){
+			getBoardService();//执行这个函数，确保将当前选中的主板信息保存在localStorage中
+			var crt_board_number = localStorage.getItem('A_NUM');//当前主板number
+			var crt_board_verify = localStorage.getItem('A_VERIFY');//当前主板的verify
+			var SHOW_URL_A = getRand(20)+crt_board_number+getRand(23)+crt_board_verify+getRand(1);
+			var SHOW_DOMIN_URL = "http://dmnqmn1.duapp.com/microcloud_SHOW.py?a="+SHOW_URL_A;
+			var SERVICE_RETURN = "no";//作为判断从服务器返回字符串的标识
+			for(var i = 0 ; i < 20 ; i++){
+			SERVICE_RETURN = "no";
+				$.ajax({
+					type:"get",
+					timeout:1000,
+					url:SHOW_DOMIN_URL,
+					async:false,
+					success:function(data){
+						data = data.trim();
+						//alert(data);
+						if(data == "%y@"){
+							//alert("操作成功");
+							SERVICE_RETURN = "ok";//如果返回操作成功，那就将标识 修改为 ok
+						}
+					}
+				});
+				if(SERVICE_RETURN == 'ok'){
+					break;
+				}
+			}
+			//不论操作是否成功，都需要对URL复位
+			localStorage.setItem('B_NUM','1');
+			localStorage.setItem('B_VERIFY','mo');
+			localStorage.setItem('C_NUM','@');
+			localStorage.setItem('C_VERIFY','lp');
+			//显示结果
+			if(SERVICE_RETURN == "ok"){
+				$("#notice_div").html('<p>操作成功</p>');
+			}else{
+				$("#notice_div").html('<p>未知结果,请重试</p>');
+			}
+			$("#notice_div_out").fadeIn();
+			$("#notice_div").fadeIn();
+			/* 关闭loader图 */
+			setTimeout("$('#notice_div_out').fadeOut()",1000);
+			$("#opr_thread").html("");
+			return false;
+		}
+
+		//获取主板的number
+		function getBoardService(){
+			var crt_bd_id = parseInt(localStorage.getItem('crt_board_id'));
+			db.transaction(function(tx){
+					tx.executeSql("SELECT number FROM mainboards WHERE id="+crt_bd_id, [] ,function(tx, rs){
+						if(rs.rows.length == 0){
+							localStorage.setItem('crt_bd_number', "");
+							return false;
+						}
+						localStorage.setItem("A_NUM", rs.rows.item(0).number.substr(0,4));
+						localStorage.setItem("A_VERIFY", rs.rows.item(0).number.substr(4));
+					});
+				});
+		}
+		//获取主板ip
+		function getIp(){
+			var board_ip = "";
+			var ipAddress = cordova.require("cordova/plugin/ipaddress");
+				 ipAddress.get(function(address) {
+					 var dotLastPos = address.lastIndexOf('.');
+					 var BOARD_DOMIN = address.substr(0, dotLastPos);
+					 BOARD_DOMIN += ".218";
+					 localStorage.setItem('BOARD_IP', BOARD_DOMIN);
+			}, function() {
+					localStorage.setItem('BOARD_IP', "");
+					return false;
+			});
+		}
+
+		//生成随机字符串
+		function getRand(length){
+			var x = "0123456789qwertyuioplkjhgfdsazxcvbnm";
+			var tmp="";
+			for(var i=0;i< length;i++)   {
+				tmp   +=   x.charAt(Math.ceil(Math.random()*100000000)%x.length);
+			}
+			return   tmp;
+		}
+		//生成指定 范围的 数字 
+		function GetRandomNum(Min,Max){   
+			var Range = Max - Min;   
+			var Rand = Math.random();   
+			return(Min + Math.round(Rand * Range));   
+		}
+	</script>
+</head>
+<body onload="init()">
+
+
+
+<!--  =========================    操作主板  ======================================================================-->
+
+<div data-role="page" data-position="fixed" id="opr_board">
+  <div data-role="header">
+	<div class="ui-grid-b">
+	 <div class="ui-block-a" align="left">
+         &nbsp;
+      </div>
+      <div class="ui-block-b" align="center">
+      	<h4 class="crt_bd_title"></h4>
+      </div>
+      <div class="ui-block-c" align="right">
+         <span id="opr_thread"></span>
+      </div>
+    </div><!--ui-grid-b-->
+  </div>
+  <div data-role="content" id="opr_index">
+	<div id="notice_div_out">
+		<div id="notice_div"></div>
+	</div>
+		<div class="ui-corner-all custom-corners">
+		<div class="ui-bar ui-bar-a">
+			<h2>控制面板</h2>
+		</div>
+		<div class="ui-body ui-body-b" id="opr_face_board">
+			<!--  各个插座  -->
+			<p id="sockets_list" style="display:none;">
+				
+			</p>
+		</div>
+	</div>
+  </div>
+  <div data-role="footer" data-position="fixed" data-tap-toggle="false">
+	<div data-role="navbar" data-iconpos="top">
+        <ul>
+           <li><a href="#gear_panel" data-icon='cloud'>微云电子</a></li>
+		</ul>
+	</div><!--  end == navbar -->
+  </div><!--  end == footer -->
+<!--   start == gear_panel    -->
+<div id="gear_panel" data-role="panel" data-display="overlay" data-position="left" data-theme="a">
+	<a href="#ed_board" data-role="button" data-transition="slide" data-icon="edit">编辑主板</a>
+	<a href="#swt_board" data-role="button" data-transition="slide" data-icon="forward">切换主板</a>
+	<a href="index.html" data-role="button" data-ajax="false" data-icon="plus">添加设备</a>
+	<a href="#about" data-role="button" data-transition="slide" data-icon="info">关于软件</a>
+	<a href="#" data-role="button" onclick="deleteData()" data-icon="alert">初始化软件</a>
+	
+</div>
+<!--   end == gear_panel    -->
+</div><!--  end == page  -->
+
+<!--  =========================   END  操作主板  ======================================================================-->
+
+
+
+
+
+
+<!--  =========================    编辑主板  ======================================================================-->
+<div data-role="page" data-position="fixed" id="ed_board">
+  <div data-role="header">
+	<div class="ui-grid-b">
+      <div class="ui-block-a" align="left">
+         <a href="opr_board.html" data-role="button" data-ajax="false" data-theme="a" data-icon="back" data-inline="true">返回</a>
+      </div>
+      <div class="ui-block-b" align="center">
+      	<h4>编辑主板</h1>
+      </div>
+	  <div class="ui-block-c" align="right">
+		 <a href="#" data-role="button" data-ajax="false" id="yes_ed_board" data-icon='recycle' data-inline="true">保存</a>
+	  </div>
+    </div><!--ui-block-a-->
+  </div>
+  <div data-role="content">
+  <!-- 操作弹窗DIV  -->
+	<div id="notice_div_out">
+		<div id="notice_div">编辑成功</div>
+	</div>
+		<!-- 当前主板的title  -->
+		<h1>主板名称</h1>
+		<input type="text" class="" id="main_board_title" value="" />
+		<!-- 当前主板下的插座  -->
+		<h1>插座列表</h1>
+		<div id="mb_sockets">
+			
+		</div>
+		<br/><br/>
+		<a href="#ed_board_panel" data-role="button" data-icon="delete" data-rel="popup"  data-transition="slideup"><font color="red">永久删除该主板</font></a>
+  </div>
+<div data-role="popup" id="ed_board_panel" data-overlay-theme="a" data-theme="c" data-dismissible="false" style="max-width:400px;" class="ui-corner-all">
+    <div data-role="header" data-theme="b" class="ui-corner-top">
+        <h1>提示</h1>
+    </div>
+    <div data-role="content" data-theme="b" class="ui-corner-bottom ui-content">
+        <h3 class="ui-title">确定删除该主板吗?</h3>
+        <p>删除该主板后，主板下的插座也将被删除...</p>
+        <a href="#" data-role="button" data-inline="true" data-rel="back" data-theme="c">取消</a>
+        <a href="#" id="del_mainboard" data-role="button" data-inline="true" data-rel="back" data-transition="flow" data-theme="b">确定</a>
+    </div>
+</div>
+</div><!--  end == page  -->
+
+<!--  =========================  END  编辑主板  ======================================================================-->
+
+
+
+
+<!--  =========================  START  切换主板  ======================================================================-->
+<div data-role="page" data-position="fixed" id="swt_board">
+  <div data-role="header">
+    <div class="ui-grid-b">
+	 <div class="ui-block-a" align="left">
+          <a href="opr_board.html" data-role="button" data-ajax="false" data-theme="a" data-icon="back" data-inline="true">返回</a>
+      </div>
+      <div class="ui-block-b" align="center">
+      	<h4>切换主板</h4>
+      </div>
+      <div class="ui-block-c" align="right">
+        
+      </div>
+    </div><!--ui-grid-b-->
+  </div>
+  <div data-role="content">
+  <!--  弹窗DIV  -->
+	<div id="notice_div_out">
+		<div id="notice_div"></div>
+	</div>
+	<div class="ui-corner-all custom-corners">
+		<div class="ui-bar ui-bar-a">
+			<h3>当前主板</h3>
+		</div>
+		<div class="ui-body ui-body-b" id="crt_mb_list">
+		<!-- 当前选中主板  -->			
+		</div>
+	</div>
+	<div class="ui-corner-all custom-corners">
+		<div class="ui-bar ui-bar-a">
+			<h3>其他主板</h3>
+		</div>
+		<div class="ui-body ui-body-b" id="not_crt_mb_list">
+			<p id="not_crt_mb_p" style="display:none;">
+			<select id="not_crt_mb_select" data-ajax="false" onchange="select_change_board(this)">
+				<option value="88888">选中其他主板</option>
+			</select>
+			</p>
+		</div>
+	</div>
+  </div>
+  <div data-role="footer" data-position="fixed" data-tap-toggle="false">
+	<div data-role="navbar" data-iconpos="top">
+        <ul>
+		   <li><a href="opr_board.html" data-ajax="false" data-icon='back'  data-iconpos="top">返回</a></li>
+		</ul>
+	</div><!--  end == navbar -->
+  </div><!--  end == footer -->
+</div><!--  end == page  -->
+<!--  =========================  END  切换主板  ======================================================================-->
+
+
+
+
+
+
+
+<!--  =========================  START  关于软件  ======================================================================-->
+<div data-role="page" data-position="fixed" id="about">
+  <div data-role="header">
+	<div class="ui-grid-b">
+	 <div class="ui-block-a" align="left">
+          <a href="opr_board.html" data-role="button" data-ajax="false" data-theme="a" data-icon="back" data-inline="true">返回</a>
+      </div>
+      <div class="ui-block-b" align="center">
+      	<h4>关于软件</h4>
+      </div>
+      <div class="ui-block-c" align="right">
+        
+      </div>
+    </div><!--ui-block-a-->
+  </div>
+  <div data-role="content">
+		<!--  关于1 -->
+		<div class="ui-corner-all custom-corners">
+			<div class="ui-bar ui-bar-a">
+				<h3>Welcome</h3>
+		    </div>
+			<div class="ui-body ui-body-b">
+				<p>欢迎您使用本软件,微云相信一个小小的APP可以影响你的家庭生活!</p>
+			</div>
+		</div>
+		<!-- 关于2 -->
+		<div class="ui-corner-all custom-corners">
+			<div class="ui-bar ui-bar-a">
+				<h3>帮助与反馈</h3>
+		    </div>
+			<div class="ui-body ui-body-b">
+				<p>如果你有不错的想法，我们希望你能够和我们联系，让这个不错的Idea加在这款APP当中，服务更多的家庭，影响他们的家庭生活!</p>
+			</div>
+		</div>
+		<!-- 关于3 -->
+		<div class="ui-corner-all custom-corners">
+			<div class="ui-bar ui-bar-a">
+				<h3>联系我们</h3>
+		    </div>
+			<div class="ui-body ui-body-b">
+				<p>电话:18345199232<br/>邮件地址:azxuwen701@gmail.com</p>
+				<p></p>
+			</div>
+		</div>
+  </div>
+</div><!--  end == page  -->
+<!--  =========================  END  关于软件  ======================================================================-->
+
+
+
+
+
+<!-- ===========START 介绍扫描页面 ===============================================================-->
+<div data-role="page" data-position="fixed" id="first_scan">
+  <div data-role="header">
+	<div class="ui-grid-b">
+	 <div class="ui-block-a" align="left">
+          <a href="opr_board.html" data-role="button" data-ajax="false" data-theme="a" data-icon="back" data-inline="true">返回</a>
+      </div>
+      <div class="ui-block-b" align="center">
+      	<h4>扫描</h4>
+      </div>
+      <div class="ui-block-c" align="right">
+        
+      </div>
+    </div><!--ui-block-a-->
+  </div>
+  <div data-role="content" data-theme="b">
+		<center>说明</center>
+		<br/>
+		<p>首次使用需要将软件与主板对接,您需要进入扫描页面扫描主板上的二维码,完成对接。</p>
+		<p><a href="index.html" data-ajax="false" data-role="button" data-theme="a">进入扫描页面</a></p>
+  </div>
+  <div data-role="footer" data-position="fixed">
+		<h1>copyright &copy; 微云科技</h1>
+  </div><!--  end == footer -->
+</div><!--  end == page  -->
+<!-- =============== END  介绍扫描页面  ======================================================================-->
+
+</body>
+</html>
